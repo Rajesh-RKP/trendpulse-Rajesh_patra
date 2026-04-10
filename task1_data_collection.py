@@ -5,18 +5,10 @@ import os
 from datetime import datetime
 
 def main():
-
-
-    # CONFIGURATION & CONSTANTS
-    # -----------------------------
-    
-    # Adding a custom User-Agent header as requested
-
+    # setup custom user agent so hacker news doesn't block the requests
     HEADERS = {"User-Agent": "TrendPulse/1.0"}
     
-
-    # Mapping categories to their specific keywords (case-insensitive later)
-    
+    # keywords mapped to categories for filtering titles later
     CATEGORIES = {
         "technology": ["AI", "software", "tech", "code", "computer", "data", "cloud", "API", "GPU", "LLM"],
         "worldnews": ["war", "government", "country", "president", "election", "climate", "attack", "global"],
@@ -25,54 +17,40 @@ def main():
         "entertainment": ["movie", "film", "music", "Netflix", "game", "book", "show", "award", "streaming"]
     }
     
-   
-   
-    # STEP 1: FETCH TOP STORY IDs
-    # --------------------------------
-    
     print("Fetching top 500 story IDs from HackerNews...")
     try:
+        # grab the top story ids
         top_stories_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
         response = requests.get(top_stories_url, headers=HEADERS, timeout=10)
-        response.raise_for_status() # Raise an exception for bad HTTP status codes
-        top_ids = response.json()[:500] # Slice the list to ensure we only get the first 500
+        response.raise_for_status() 
+        top_ids = response.json()[:500] # just need the first 500
     except Exception as e:
         print(f"Error fetching top stories: {e}")
-        return # Exit script safely if the main feed fails
+        return 
 
-    # Initialize storage variables
     final_stories = []
-    used_ids = set() # Keeps track of stories already assigned to prevent duplicates
+    # use a set to track ids so we don't accidentally add the same story to two categories
+    used_ids = set() 
     
-    # A dictionary cache to store API responses. 
-    # Because we loop by category, we check the same IDs multiple times.
-    # Caching them prevents us from spamming the HN API and making thousands of requests!
+    # dictionary to cache api responses. this prevents spamming the api 
+    # for the same story id while looping through different categories
     story_cache = {} 
 
-  
-  
-    # STEP 2: ITERATE CATEGORIES & EXTRACT FIELDS
-    # ---------------------------------------------
-    
-    # We loop over categories first to satisfy the "one sleep per category loop" rule
-
+    # loop through categories first to manage the sleep timer rule
     for category_name, keywords in CATEGORIES.items():
         print(f"Collecting stories for category: {category_name}...")
         category_count = 0
         
         for story_id in top_ids:
-            # Stop if we hit 30 stories for this specific category (30 * 5 categories = 150 total)
-
+            # stop if we hit 30 stories for this category (aiming for 150 total)
             if category_count >= 30:
                 break 
                 
-            # Skip if this story was already caught by an earlier category
-
+            # skip if already processed
             if story_id in used_ids:
                 continue 
                 
-            # Fetch the story details if it's not already in our memory cache
-
+            # fetch the post if we haven't seen it yet
             if story_id not in story_cache:
                 try:
                     story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
@@ -80,74 +58,57 @@ def main():
                     story_response.raise_for_status()
                     story_cache[story_id] = story_response.json()
                     
-                    # Print progress so the script doesn't look like it's frozen
-
+                    # print a little progress update so the console doesn't look frozen
                     if len(story_cache) % 50 == 0:
                         print(f"  ...fetched {len(story_cache)} unique stories from API so far...")
 
                 except Exception as e:
                     print(f"Failed to fetch story {story_id}: {e} - Moving on...")
-                    story_cache[story_id] = None # Mark as None so we don't try fetching it again
+                    story_cache[story_id] = None 
                     
             story = story_cache[story_id]
             
-            # Ensure the story object is valid and has a title before processing
-
+            # make sure the post isn't empty and actually has a title
             if not story or 'title' not in story:
                 continue
                 
-            # Convert title to lowercase for case-insensitive matching
-
+            # force lowercase for easier keyword matching
             title_lower = story.get('title', '').lower()
             
-            # Check if any keyword exists as a substring in the title
-
+            # check if any of our category keywords are in the title string
             if any(kw.lower() in title_lower for kw in keywords):
-                # We have a match! Extract only the requested fields
-
+                # found a match, pull out only the fields we care about
                 extracted_story = {
                     "post_id": story.get("id"),
                     "title": story.get("title"),
                     "category": category_name,
-                    "score": story.get("score", 0), # Default to 0 if missing
-                    "num_comments": story.get("descendants", 0), # HN uses 'descendants' for comments
+                    "score": story.get("score", 0), # fallback to 0
+                    "num_comments": story.get("descendants", 0), # descendants = comments in HN api
                     "author": story.get("by", "Unknown"),
                     "collected_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 
                 final_stories.append(extracted_story)
-                used_ids.add(story_id) # Mark as used
+                used_ids.add(story_id)
                 category_count += 1
                 
-        # Sleep for 2 seconds at the end of every category loop (Rule requirement)
-
+        # sleep 2 seconds between categories per the requirements
         print(f"Finished {category_name}. Found {category_count} stories. Sleeping for 2 seconds...")
         time.sleep(2)
         
-
-
-    # STEP 3: SAVE TO JSON FILE
-    # ---------------------------
-    
-    # Create the data folder if it doesn't currently exist
-
+    # make the data dir if missing
     if not os.path.exists('data'):
-
         os.makedirs('data')
         
-    # Format current date as YYYYMMDD
-
+    # build the filename with today's date
     date_str = datetime.now().strftime("%Y%m%d")
     filename = f"data/trends_{date_str}.json"
     
     try:
-        # Save as formatted JSON
-
+        # dump everything to json
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(final_stories, f, indent=4)
             
-        # Expected console output requirement
-
         print(f"Collected {len(final_stories)} stories. Saved to {filename}")
     except Exception as e:
         print(f"Error saving data to file: {e}")
